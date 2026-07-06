@@ -1,5 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
+import { GoogleGenAI } from '@google/genai';
 import { FishingContext } from '@/types';
 import { selectResponse } from '@/utils/fishingResponses';
 import { getCurrentLocation } from '@/services/location/locationService';
@@ -8,11 +7,10 @@ import { getCurrentWeather, getCurrentSeason, getTimeOfDay } from '@/services/we
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
-const MAX_TOKENS = parseInt(process.env.ANTHROPIC_MAX_TOKENS ?? '1500', 10);
+const MODEL      = process.env.GEMINI_MODEL      ?? 'gemini-2.5-flash';
+const MAX_TOKENS = parseInt(process.env.GEMINI_MAX_TOKENS ?? '1500', 10);
 
-// ─── Static System Prompt (prompt-cached across requests) ────────────────────
-// Keep this block > 1024 tokens so it qualifies for Anthropic prompt caching.
+// ─── Static System Prompt ────────────────────────────────────────────────────
 
 const STATIC_SYSTEM_PROMPT = `\
 You are CAST AI — an elite AI fishing intelligence platform embedded in a premium angler's companion app. You deliver tournament-caliber advice with the precision and depth of a professional guide who has spent decades on the water.
@@ -61,21 +59,21 @@ If a user asks about a specific local lake or GPS coordinates you don't have dat
 
 // ─── Client Factory ───────────────────────────────────────────────────────────
 
-let _client: Anthropic | null = null;
+let _client: GoogleGenAI | null = null;
 
-function getClient(): Anthropic {
+function getClient(): GoogleGenAI {
   if (!_client) {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       throw new MissingApiKeyError();
     }
-    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    _client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
   return _client;
 }
 
 export class MissingApiKeyError extends Error {
   constructor() {
-    super('ANTHROPIC_API_KEY is not set. Add it to .env.local to enable live AI responses.');
+    super('GEMINI_API_KEY is not set. Add it to .env.local to enable live AI responses.');
     this.name = 'MissingApiKeyError';
   }
 }
@@ -101,8 +99,8 @@ export async function gatherFishingContext(): Promise<FishingContext> {
 // ─── Prompt Building ──────────────────────────────────────────────────────────
 
 /**
- * Builds the dynamic conditions block appended to the cached static prompt.
- * Kept separate so the static portion can be cached while this portion varies.
+ * Builds the dynamic conditions block appended to the static prompt.
+ * Kept separate so it can be varied per-request without touching the persona.
  */
 function buildDynamicContext(context: FishingContext): string {
   const lines: string[] = ['## Live Conditions'];
@@ -130,57 +128,55 @@ function buildDynamicContext(context: FishingContext): string {
     lines.push(`- Moon phase: ${t.moonPhase}`);
   }
 
-  // Only add the section if we have at least some data beyond the header
+  // Only include section if there is at least one data line beyond the header
   return lines.length > 1 ? lines.join('\n') : '';
 }
 
 /**
- * Returns the two system-prompt blocks.
- * The static block carries cache_control so Anthropic caches it across requests;
- * the dynamic block is intentionally left uncached because it changes each call.
+ * Joins the static persona and live conditions into a single system instruction
+ * string for Gemini's config.systemInstruction field.
  */
-export function buildSystemBlocks(context: FishingContext): TextBlockParam[] {
-  const blocks: TextBlockParam[] = [
-    {
-      type: 'text',
-      text: STATIC_SYSTEM_PROMPT,
-      cache_control: { type: 'ephemeral' },   // Cache the large static persona
-    },
-  ];
-
+function buildSystemInstruction(context: FishingContext): string {
   const dynamic = buildDynamicContext(context);
-  if (dynamic) {
-    blocks.push({ type: 'text', text: dynamic });
-  }
-
-  return blocks;
+  return dynamic ? `${STATIC_SYSTEM_PROMPT}\n\n${dynamic}` : STATIC_SYSTEM_PROMPT;
 }
 
 // ─── Message Param Builder ────────────────────────────────────────────────────
 
 type ConversationTurn = { role: string; content: string };
 
-function toAnthropicMessages(
+/**
+ * Converts conversation history to Gemini's Content[] format.
+ *
+ * Role mapping:
+ *   'user'      → 'user'   (unchanged)
+ *   'assistant' → 'model'  (Gemini uses 'model', not 'assistant')
+ *   'system'    → filtered (system context is in config.systemInstruction)
+ *
+ * Content format: { role, content: string } → { role, parts: [{ text }] }
+ */
+function toGeminiContents(
   history: ConversationTurn[],
   userMessage: string,
-): Anthropic.Messages.MessageParam[] {
-  const filtered = history
-    .filter((m): m is { role: 'user' | 'assistant'; content: string } =>
-      m.role === 'user' || m.role === 'assistant',
-    )
-    .map((m) => ({ role: m.role, content: m.content }));
+): Array<{ role: string; parts: Array<{ text: string }> }> {
+  const mapped = history
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({
+      role:  m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
 
-  return [...filtered, { role: 'user' as const, content: userMessage }];
+  return [...mapped, { role: 'user', parts: [{ text: userMessage }] }];
 }
 
 // ─── Streaming Entry Point ────────────────────────────────────────────────────
 
 /**
- * Returns a ReadableStream of raw text chunks.
- * Callers (the route handler) pipe this directly to the HTTP Response.
+ * Returns a ReadableStream of raw UTF-8 text chunks.
+ * The route handler pipes this directly to the HTTP Response body.
  *
- * Falls back to a single-chunk mock stream when ANTHROPIC_API_KEY is absent
- * so the app works in development without a key.
+ * Falls back to a single-chunk mock stream when GEMINI_API_KEY is absent
+ * so the app works for anyone cloning the repo without a key.
  */
 export async function streamQuery(
   userMessage: string,
@@ -189,31 +185,36 @@ export async function streamQuery(
   signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   // ── Mock fallback ─────────────────────────────────────────────────────────
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.GEMINI_API_KEY) {
     const { response } = selectResponse(userMessage, context);
     return mockStream(response);
   }
 
-  // ── Live Anthropic stream ─────────────────────────────────────────────────
-  const client   = getClient();
-  const encoder  = new TextEncoder();
-  const system   = buildSystemBlocks(context);
-  const messages = toAnthropicMessages(history, userMessage);
+  // ── Live Gemini stream ────────────────────────────────────────────────────
+  const ai      = getClient();
+  const encoder = new TextEncoder();
+  const systemInstruction = buildSystemInstruction(context);
+  const contents          = toGeminiContents(history, userMessage);
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const stream = client.messages.stream(
-          { model: MODEL, max_tokens: MAX_TOKENS, system, messages },
-          { signal },
-        );
+        // @google/genai takes a single argument; AbortSignal goes inside config
+        // as `abortSignal` (not as a second options argument).
+        const stream = await ai.models.generateContentStream({
+          model: MODEL,
+          contents,
+          config: {
+            systemInstruction,
+            maxOutputTokens: MAX_TOKENS,
+            abortSignal: signal,
+          },
+        });
 
-        for await (const event of stream) {
-          if (
-            event.type === 'content_block_delta' &&
-            event.delta.type === 'text_delta'
-          ) {
-            controller.enqueue(encoder.encode(event.delta.text));
+        for await (const chunk of stream) {
+          const text = chunk.text;
+          if (text) {
+            controller.enqueue(encoder.encode(text));
           }
         }
       } catch (err) {
@@ -222,7 +223,7 @@ export async function streamQuery(
           controller.close();
           return;
         }
-        // Emit a readable error token the UI can display
+        // Emit a readable error message as the final stream chunk
         controller.enqueue(encoder.encode(formatStreamError(err)));
       } finally {
         controller.close();
@@ -251,17 +252,28 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+/**
+ * The @google/genai SDK (0.x / 1.x) does not export a stable named error class
+ * suitable for instanceof checks. Duck-type the HTTP status field instead.
+ */
 function formatStreamError(err: unknown): string {
-  if (err instanceof Anthropic.APIError) {
-    switch (err.status) {
-      case 401:
-        return '\n\n⚠️ *Invalid API key. Check your ANTHROPIC_API_KEY in .env.local.*';
-      case 429:
-        return '\n\n⚠️ *Rate limit reached. Please wait a moment and try again.*';
-      case 529:
-        return '\n\n⚠️ *Anthropic API is temporarily overloaded. Try again in a few seconds.*';
-      default:
-        return `\n\n⚠️ *API error (${err.status}). Please try again.*`;
+  if (err instanceof Error) {
+    const status = (err as { status?: number }).status;
+    if (status !== undefined) {
+      switch (status) {
+        case 400:
+          return '\n\n⚠️ *Invalid request. Check your message and try again.*';
+        case 401:
+        case 403:
+          return '\n\n⚠️ *Invalid API key. Check your GEMINI_API_KEY in .env.local.*';
+        case 429:
+          return '\n\n⚠️ *Rate limit reached. Please wait a moment and try again.*';
+        case 500:
+        case 503:
+          return '\n\n⚠️ *Gemini API is temporarily unavailable. Try again in a few seconds.*';
+        default:
+          return `\n\n⚠️ *API error (${status}). Please try again.*`;
+      }
     }
   }
   return '\n\n⚠️ *Something went wrong. Please try again.*';

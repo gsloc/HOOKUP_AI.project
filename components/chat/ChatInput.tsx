@@ -88,6 +88,12 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
             onKeyDown={handleKeyDown}
             placeholder="Ask about techniques, conditions, gear, or any fishing question..."
             rows={1}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            data-gramm="false"
+            data-gramm_editor="false"
+            data-enable-grammarly="false"
             className={`
               w-full resize-none bg-ocean-750/80 border rounded-2xl px-4 py-3 pr-16
               text-sm text-ocean-50 placeholder-ocean-400/40

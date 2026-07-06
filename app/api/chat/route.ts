@@ -15,6 +15,7 @@ const STREAM_HEADERS: HeadersInit = {
 };
 
 export async function POST(req: NextRequest): Promise<Response> {
+
   // ── Input validation ────────────────────────────────────────────────────────
   let body: ChatApiRequest;
   try {
