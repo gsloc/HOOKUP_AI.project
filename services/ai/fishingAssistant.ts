@@ -80,9 +80,18 @@ export class MissingApiKeyError extends Error {
 
 // ─── Context Gathering ────────────────────────────────────────────────────────
 
-export async function gatherFishingContext(): Promise<FishingContext> {
+export async function gatherFishingContext(
+  clientLocation?: import('@/types').LocationData,
+): Promise<FishingContext> {
+  // Location is browser-sourced (geolocation or manual entry). If the client
+  // sent one in the request body, use it directly. Otherwise fall back to the
+  // legacy mock so server-side calls still resolve during development.
+  const locationPromise = clientLocation
+    ? Promise.resolve(clientLocation)
+    : getCurrentLocation().catch(() => undefined);
+
   const [location, weather, tides] = await Promise.allSettled([
-    getCurrentLocation(),
+    locationPromise,
     getCurrentWeather(),
     getCurrentTides(),
   ]);
@@ -126,6 +135,14 @@ function buildDynamicContext(context: FishingContext): string {
     lines.push(`- Next high: ${t.nextHigh.time} (${t.nextHigh.heightFt}ft)`);
     lines.push(`- Next low: ${t.nextLow.time} (${t.nextLow.heightFt}ft)`);
     lines.push(`- Moon phase: ${t.moonPhase}`);
+  }
+
+  // Manual-location disclosure: nudge the AI to mention (once) that enabling
+  // browser geolocation would produce more accurate recommendations.
+  if (context.location?.precise === false) {
+    lines.push(
+      '- NOTE: User provided location manually (no browser geolocation). Recommendations use approximate coordinates. Mention once, politely, that enabling location would give more accurate advice.',
+    );
   }
 
   // Only include section if there is at least one data line beyond the header

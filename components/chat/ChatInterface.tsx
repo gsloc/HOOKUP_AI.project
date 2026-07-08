@@ -1,18 +1,55 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import TypingIndicator from './TypingIndicator';
+import LocationEntry from './LocationEntry';
+import ManualLocationBanner from './ManualLocationBanner';
 import AppHeader from '@/components/ui/AppHeader';
 import { useChat } from '@/hooks/useChat';
+import {
+  getCurrentLocation,
+  LocationPermissionError,
+} from '@/services/location/locationService';
+import { LocationData } from '@/types';
+
+type LocationStatus = 'resolving' | 'ready' | 'needs-manual';
 
 export default function ChatInterface() {
-  const { messages, isLoading, sendMessage, clearMessages } = useChat();
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [location, setLocation]             = useState<LocationData | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('resolving');
+
+  const { messages, isLoading, sendMessage, clearMessages } = useChat(location);
+  const bottomRef          = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll on new content
+  // ── Attempt browser geolocation on mount ────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const loc = await getCurrentLocation();
+        if (!cancelled) {
+          setLocation(loc);
+          setLocationStatus('ready');
+        }
+      } catch (err) {
+        void err;
+        if (!cancelled) {
+          setLocationStatus('needs-manual');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleManualLocation = (loc: LocationData) => {
+    setLocation(loc);
+    setLocationStatus('ready');
+  };
+
+  // ── Auto-scroll on new content ──────────────────────────────────────────────
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -23,21 +60,22 @@ export default function ChatInterface() {
     }
   }, [messages, isLoading]);
 
-  // The last assistant message while loading is the one being streamed into.
   const lastMsg = messages[messages.length - 1];
   const streamingMessageId =
     isLoading && lastMsg?.role === 'assistant' ? lastMsg.id : null;
-
-  // Show the dot-typing indicator only while waiting for the FIRST chunk
-  // (i.e. the HTTP request is in-flight but the assistant message hasn't been
-  // seeded yet — last message is still the user's turn).
   const showTypingIndicator =
     isLoading && (messages.length === 0 || lastMsg?.role !== 'assistant');
+
+  const showManualBanner = location?.precise === false;
+  const showLocationEntry = locationStatus === 'needs-manual' && !location;
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden rounded-2xl border border-ocean-600/30 bg-ocean-800/50 backdrop-blur-xl shadow-ocean-glow">
       {/* Header */}
       <AppHeader onClear={clearMessages} />
+
+      {/* Manual-location banner (subtle, always-visible while in manual mode) */}
+      {showManualBanner && <ManualLocationBanner />}
 
       {/* Messages */}
       <div
@@ -57,8 +95,10 @@ export default function ChatInterface() {
         <div ref={bottomRef} className="h-px" />
       </div>
 
-      {/* Input */}
-      <ChatInput onSend={sendMessage} isLoading={isLoading} />
+      {/* Footer: either the location entry form or the chat input */}
+      {showLocationEntry
+        ? <LocationEntry onLocationSet={handleManualLocation} />
+        : <ChatInput onSend={sendMessage} isLoading={isLoading} />}
     </div>
   );
 }

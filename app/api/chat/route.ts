@@ -34,7 +34,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   // ── Gather context (mock services for now; real APIs in Phase 3) ────────────
-  const context = await gatherFishingContext();
+  // Location is client-sourced (browser geolocation or manual entry) and
+  // travels in the request body. Weather/tides remain mock server-side.
+  const context = await gatherFishingContext(body.location);
 
   // ── Stream ──────────────────────────────────────────────────────────────────
   try {

@@ -22,6 +22,7 @@ export interface LocationData {
   state?: string;
   waterBody?: string;
   waterType?: 'freshwater' | 'saltwater' | 'brackish';
+  precise?: boolean;   // true when from browser geolocation, false when from manual entry
 }
 
 export interface WeatherData {
@@ -86,6 +87,7 @@ export interface FishingContext {
 export interface ChatApiRequest {
   message: string;
   conversationHistory?: Pick<Message, 'role' | 'content'>[];
+  location?: LocationData;   // Client-supplied location (geolocation or manual entry)
 }
 
 export interface ChatApiResponse {

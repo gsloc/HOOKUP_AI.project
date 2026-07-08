@@ -2,7 +2,7 @@
 
 import { useReducer, useCallback, useRef, useLayoutEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Message, ChatState, ChatAction, ChatApiRequest } from '@/types';
+import { Message, ChatState, ChatAction, ChatApiRequest, LocationData } from '@/types';
 
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 
@@ -52,9 +52,16 @@ const initialState: ChatState = {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useChat() {
+export function useChat(location: LocationData | null = null) {
   const [state, dispatch] = useReducer(chatReducer, initialState);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Location is a ref so sendMessage (stable ref, empty deps) always reads
+  // the latest value without triggering ChatInput re-renders on every stream chunk.
+  const locationRef = useRef(location);
+  useLayoutEffect(() => {
+    locationRef.current = location;
+  });
 
   /**
    * Mirror of mutable state for use inside async callbacks.
@@ -103,6 +110,7 @@ export function useChat() {
           .filter((m) => m.id !== 'welcome')
           .slice(-8)   // Send last 8 turns for conversational context
           .map(({ role, content }) => ({ role, content })),
+        ...(locationRef.current ? { location: locationRef.current } : {}),
       };
 
       const res = await fetch('/api/chat', {
