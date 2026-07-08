@@ -5,10 +5,60 @@ export interface WeatherServiceConfig {
   units?: 'imperial' | 'metric';
 }
 
-// Phase 2: Replace with OpenWeatherMap API or WeatherAPI.com
+// ─── Error ───────────────────────────────────────────────────────────────────
+
+export class WeatherServiceError extends Error {
+  constructor(message = 'Weather service failed') {
+    super(message);
+    this.name = 'WeatherServiceError';
+  }
+}
+
+// ─── Live weather ────────────────────────────────────────────────────────────
+
+/**
+ * Fetches real current weather via the /api/weather/current server-side proxy.
+ *
+ * Signature is preserved as (lat?, lng?) so existing call sites don't break; if
+ * coordinates are missing we throw immediately rather than silently returning
+ * mock data — the AI-context gatherer wraps this in Promise.allSettled and
+ * degrades gracefully when weather is unavailable.
+ *
+ * When invoked from server-side code (via the AI context gatherer), we need an
+ * absolute URL. VERCEL_URL is populated in Vercel deployments; locally we fall
+ * back to the dev port.
+ */
 export async function getCurrentWeather(lat?: number, lng?: number): Promise<WeatherData> {
-  await simulateNetworkDelay(400);
-  return generateMockWeatherData();
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    throw new WeatherServiceError('Missing coordinates');
+  }
+
+  const path = `/api/weather/current?latitude=${lat}&longitude=${lng}`;
+  const url = isServer() ? `${resolveBaseUrl()}${path}` : path;
+
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new WeatherServiceError('Network error');
+  }
+
+  if (!res.ok) {
+    throw new WeatherServiceError(`Upstream ${res.status}`);
+  }
+
+  const data = (await res.json()) as WeatherData;
+  return data;
+}
+
+function isServer(): boolean {
+  return typeof window === 'undefined';
+}
+
+function resolveBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return `http://localhost:${process.env.PORT ?? '3000'}`;
 }
 
 export async function getWeatherForecast(
@@ -71,6 +121,7 @@ export function getFishingPressureRating(weather: WeatherData): {
   return { rating: clamped, ...labels[clamped] };
 }
 
+// Retained for tests and forecast-mock fallback. Live path uses Open-Meteo above.
 function generateMockWeatherData(): WeatherData {
   const conditions = ['Partly Cloudy', 'Overcast', 'Clear', 'Light Rain', 'Sunny'];
   const pressureTrends = ['rising', 'falling', 'steady'] as const;

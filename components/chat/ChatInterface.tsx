@@ -12,13 +12,15 @@ import {
   getCurrentLocation,
   LocationPermissionError,
 } from '@/services/location/locationService';
-import { LocationData } from '@/types';
+import { LocationData, ServiceStatus } from '@/types';
 
 type LocationStatus = 'resolving' | 'ready' | 'needs-manual';
+type LivePillStatus = ServiceStatus['status']; // 'connected' | 'mock' | 'error'
 
 export default function ChatInterface() {
   const [location, setLocation]             = useState<LocationData | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>('resolving');
+  const [weatherPill, setWeatherPill]       = useState<LivePillStatus>('mock');
 
   const { messages, isLoading, sendMessage, clearMessages } = useChat(location);
   const bottomRef          = useRef<HTMLDivElement>(null);
@@ -49,6 +51,37 @@ export default function ChatInterface() {
     setLocationStatus('ready');
   };
 
+  // ── Ping the weather proxy once we have coords to prove liveness ────────────
+  // This is a background health check purely for the status pill — the chat
+  // endpoint fetches its own weather. Any success ⇒ pill flips to Live.
+  useEffect(() => {
+    if (!location) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/weather/current?latitude=${location.lat}&longitude=${location.lng}`,
+        );
+        if (cancelled) return;
+        setWeatherPill(res.ok ? 'connected' : 'error');
+      } catch {
+        if (!cancelled) setWeatherPill('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [location]);
+
+  // ── Header service pills: reflect actual live-status ────────────────────────
+  const headerServices: ServiceStatus[] = [
+    { name: 'weather', status: weatherPill, label: 'Weather' },
+    { name: 'tides',   status: 'mock',      label: 'Tides' },
+    {
+      name: 'location',
+      status: location ? 'connected' : 'mock',
+      label: 'Location',
+    },
+  ];
+
   // ── Auto-scroll on new content ──────────────────────────────────────────────
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -72,7 +105,7 @@ export default function ChatInterface() {
   return (
     <div className="flex flex-col h-full w-full overflow-hidden rounded-2xl border border-ocean-600/30 bg-ocean-800/50 backdrop-blur-xl shadow-ocean-glow">
       {/* Header */}
-      <AppHeader onClear={clearMessages} />
+      <AppHeader onClear={clearMessages} services={headerServices} />
 
       {/* Manual-location banner (subtle, always-visible while in manual mode) */}
       {showManualBanner && <ManualLocationBanner />}

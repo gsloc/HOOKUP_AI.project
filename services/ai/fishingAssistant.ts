@@ -90,9 +90,13 @@ export async function gatherFishingContext(
     ? Promise.resolve(clientLocation)
     : getCurrentLocation().catch(() => undefined);
 
+  // Weather requires coords — pass the client-supplied location through so the
+  // Open-Meteo proxy has something to query. If no clientLocation was provided,
+  // getCurrentWeather throws WeatherServiceError and Promise.allSettled turns
+  // it into an undefined slot in FishingContext (the prompt builder skips it).
   const [location, weather, tides] = await Promise.allSettled([
     locationPromise,
-    getCurrentWeather(),
+    getCurrentWeather(clientLocation?.lat, clientLocation?.lng),
     getCurrentTides(),
   ]);
   const now = new Date();
