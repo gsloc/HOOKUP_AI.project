@@ -97,7 +97,7 @@ export async function gatherFishingContext(
   const [location, weather, tides] = await Promise.allSettled([
     locationPromise,
     getCurrentWeather(clientLocation?.lat, clientLocation?.lng),
-    getCurrentTides(),
+    getCurrentTides(clientLocation?.lat, clientLocation?.lng),
   ]);
   const now = new Date();
   return {
@@ -135,9 +135,10 @@ function buildDynamicContext(context: FishingContext): string {
   }
   if (context.tides) {
     const t = context.tides;
+    if (t.stationName) lines.push(`- Nearest tide station: ${t.stationName}`);
     lines.push(`- Tide: ${t.currentTrend} at ${t.currentHeight}ft`);
-    lines.push(`- Next high: ${t.nextHigh.time} (${t.nextHigh.heightFt}ft)`);
-    lines.push(`- Next low: ${t.nextLow.time} (${t.nextLow.heightFt}ft)`);
+    if (t.nextHigh) lines.push(`- Next high: ${t.nextHigh.time} (${t.nextHigh.heightFt}ft)`);
+    if (t.nextLow)  lines.push(`- Next low: ${t.nextLow.time} (${t.nextLow.heightFt}ft)`);
     lines.push(`- Moon phase: ${t.moonPhase}`);
   }
 

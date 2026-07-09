@@ -21,6 +21,7 @@ export default function ChatInterface() {
   const [location, setLocation]             = useState<LocationData | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>('resolving');
   const [weatherPill, setWeatherPill]       = useState<LivePillStatus>('mock');
+  const [tidesPill, setTidesPill]           = useState<LivePillStatus>('mock');
 
   const { messages, isLoading, sendMessage, clearMessages } = useChat(location);
   const bottomRef          = useRef<HTMLDivElement>(null);
@@ -71,10 +72,37 @@ export default function ChatInterface() {
     return () => { cancelled = true; };
   }, [location]);
 
+  // ── Ping the tide proxy chain (nearest-station → predictions) ──────────────
+  // Same pattern as weather. Both round trips must succeed to flip Live.
+  useEffect(() => {
+    if (!location) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const stationRes = await fetch(
+          `/api/tides/nearest-station?latitude=${location.lat}&longitude=${location.lng}`,
+        );
+        if (cancelled) return;
+        if (!stationRes.ok) { setTidesPill('error'); return; }
+        const station = await stationRes.json();
+
+        const predRes = await fetch(
+          `/api/tides/predictions?stationId=${encodeURIComponent(station.id)}` +
+          `&stationName=${encodeURIComponent(station.name)}`,
+        );
+        if (cancelled) return;
+        setTidesPill(predRes.ok ? 'connected' : 'error');
+      } catch {
+        if (!cancelled) setTidesPill('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [location]);
+
   // ── Header service pills: reflect actual live-status ────────────────────────
   const headerServices: ServiceStatus[] = [
     { name: 'weather', status: weatherPill, label: 'Weather' },
-    { name: 'tides',   status: 'mock',      label: 'Tides' },
+    { name: 'tides',   status: tidesPill,   label: 'Tides' },
     {
       name: 'location',
       status: location ? 'connected' : 'mock',

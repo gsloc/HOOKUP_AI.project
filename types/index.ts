@@ -40,9 +40,10 @@ export interface WeatherData {
 export interface TideData {
   currentHeight: number;
   currentTrend: 'incoming' | 'outgoing' | 'slack';
-  nextHigh: TideEvent;
-  nextLow: TideEvent;
+  nextHigh: TideEvent | null;
+  nextLow: TideEvent | null;
   moonPhase: MoonPhase;
+  stationName?: string;
 }
 
 export interface TideEvent {
