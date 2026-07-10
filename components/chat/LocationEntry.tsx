@@ -59,6 +59,10 @@ export default function LocationEntry({ onLocationSet }: LocationEntryProps) {
               spellCheck={false}
               autoCorrect="off"
               autoCapitalize="off"
+              suppressHydrationWarning={true}
+              data-gramm="false"
+              data-gramm_editor="false"
+              data-enable-grammarly="false"
               disabled={isLoading}
               className={`
                 w-full bg-ocean-800/70 border rounded-xl px-4 py-2.5

@@ -91,6 +91,7 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
+            suppressHydrationWarning={true}
             data-gramm="false"
             data-gramm_editor="false"
             data-enable-grammarly="false"
