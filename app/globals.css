@@ -161,7 +161,7 @@ textarea:focus {
 /* ─── Chat container sizing ─── */
 .chat-container {
   width: 100%;
-  max-width: 820px;
+  max-width: 1100px;
   height: min(88vh, 820px);
   min-height: 500px;
 }

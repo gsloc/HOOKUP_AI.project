@@ -6,28 +6,58 @@ import ChatInput from './ChatInput';
 import TypingIndicator from './TypingIndicator';
 import LocationEntry from './LocationEntry';
 import ManualLocationBanner from './ManualLocationBanner';
+import ChatSidebar from './ChatSidebar';
 import AppHeader from '@/components/ui/AppHeader';
 import { useChat } from '@/hooks/useChat';
 import {
   getCurrentLocation,
   LocationPermissionError,
 } from '@/services/location/locationService';
+import {
+  getActiveChatId,
+  getChat,
+  createChat,
+  setActiveChatId,
+} from '@/services/storage/chatStorage';
 import { LocationData, ServiceStatus } from '@/types';
 
 type LocationStatus = 'resolving' | 'ready' | 'needs-manual';
 type LivePillStatus = ServiceStatus['status']; // 'connected' | 'mock' | 'error'
 
 export default function ChatInterface() {
+  // ── Location state ─────────────────────────────────────────────────────────
   const [location, setLocation]             = useState<LocationData | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>('resolving');
-  const [weatherPill, setWeatherPill]       = useState<LivePillStatus>('mock');
-  const [tidesPill, setTidesPill]           = useState<LivePillStatus>('mock');
 
-  const { messages, isLoading, sendMessage, clearMessages } = useChat(location);
+  // ── Service-status pills (session-scoped, not per-chat) ────────────────────
+  const [weatherPill, setWeatherPill] = useState<LivePillStatus>('mock');
+  const [tidesPill, setTidesPill]     = useState<LivePillStatus>('mock');
+
+  // ── Chat lifecycle ─────────────────────────────────────────────────────────
+  const [activeChatId, setActiveChatIdState] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen]        = useState(false);
+
+  const { messages, isLoading, sendMessage } = useChat(location, activeChatId);
   const bottomRef          = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // ── Attempt browser geolocation on mount ────────────────────────────────────
+  // ── Mount: resolve the active chat (or create one) ─────────────────────────
+  useEffect(() => {
+    const existingId = getActiveChatId();
+    if (existingId && getChat(existingId)) {
+      setActiveChatIdState(existingId);
+    } else {
+      const fresh = createChat(location ?? undefined);
+      setActiveChatIdState(fresh.id);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('hookup:chats-changed'));
+      }
+    }
+    // Only run once at mount — location may still be resolving here, and that's fine.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Attempt browser geolocation on mount ───────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -39,9 +69,7 @@ export default function ChatInterface() {
         }
       } catch (err) {
         void err;
-        if (!cancelled) {
-          setLocationStatus('needs-manual');
-        }
+        if (!cancelled) setLocationStatus('needs-manual');
       }
     })();
     return () => { cancelled = true; };
@@ -52,9 +80,7 @@ export default function ChatInterface() {
     setLocationStatus('ready');
   };
 
-  // ── Ping the weather proxy once we have coords to prove liveness ────────────
-  // This is a background health check purely for the status pill — the chat
-  // endpoint fetches its own weather. Any success ⇒ pill flips to Live.
+  // ── Health-check pings (session-scoped) ────────────────────────────────────
   useEffect(() => {
     if (!location) return;
     let cancelled = false;
@@ -72,8 +98,6 @@ export default function ChatInterface() {
     return () => { cancelled = true; };
   }, [location]);
 
-  // ── Ping the tide proxy chain (nearest-station → predictions) ──────────────
-  // Same pattern as weather. Both round trips must succeed to flip Live.
   useEffect(() => {
     if (!location) return;
     let cancelled = false;
@@ -99,7 +123,17 @@ export default function ChatInterface() {
     return () => { cancelled = true; };
   }, [location]);
 
-  // ── Header service pills: reflect actual live-status ────────────────────────
+  // ── Chat switching handlers ────────────────────────────────────────────────
+  const handleSelectChat = (chatId: string) => {
+    setActiveChatId(chatId);
+    setActiveChatIdState(chatId);
+  };
+
+  const handleNewChat = (chatId: string) => {
+    // createChat already sets the active-id in storage
+    setActiveChatIdState(chatId);
+  };
+
   const headerServices: ServiceStatus[] = [
     { name: 'weather', status: weatherPill, label: 'Weather' },
     { name: 'tides',   status: tidesPill,   label: 'Tides' },
@@ -110,7 +144,7 @@ export default function ChatInterface() {
     },
   ];
 
-  // ── Auto-scroll on new content ──────────────────────────────────────────────
+  // ── Auto-scroll on new content ─────────────────────────────────────────────
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -131,35 +165,47 @@ export default function ChatInterface() {
   const showLocationEntry = locationStatus === 'needs-manual' && !location;
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden rounded-2xl border border-ocean-600/30 bg-ocean-800/50 backdrop-blur-xl shadow-ocean-glow">
-      {/* Header */}
-      <AppHeader onClear={clearMessages} services={headerServices} />
+    <div className="flex h-full w-full overflow-hidden rounded-2xl border border-ocean-600/30 bg-ocean-800/50 backdrop-blur-xl shadow-ocean-glow">
+      {/* Left: chat sidebar */}
+      <ChatSidebar
+        activeChatId={activeChatId}
+        onSelectChat={handleSelectChat}
+        onNewChat={handleNewChat}
+        location={location}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
-      {/* Manual-location banner (subtle, always-visible while in manual mode) */}
-      {showManualBanner && <ManualLocationBanner />}
+      {/* Right: chat column */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <AppHeader
+          services={headerServices}
+          onOpenSidebar={() => setSidebarOpen(true)}
+        />
 
-      {/* Messages */}
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-5 space-y-4 scrollbar-thin"
-      >
-        {messages.map((message) => (
-          <ChatMessage
-            key={message.id}
-            message={message}
-            isStreaming={message.id === streamingMessageId}
-          />
-        ))}
+        {showManualBanner && <ManualLocationBanner />}
 
-        {showTypingIndicator && <TypingIndicator />}
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto px-4 py-5 space-y-4 scrollbar-thin"
+        >
+          {messages.map((message) => (
+            <ChatMessage
+              key={message.id}
+              message={message}
+              isStreaming={message.id === streamingMessageId}
+            />
+          ))}
 
-        <div ref={bottomRef} className="h-px" />
+          {showTypingIndicator && <TypingIndicator />}
+
+          <div ref={bottomRef} className="h-px" />
+        </div>
+
+        {showLocationEntry
+          ? <LocationEntry onLocationSet={handleManualLocation} />
+          : <ChatInput onSend={sendMessage} isLoading={isLoading} />}
       </div>
-
-      {/* Footer: either the location entry form or the chat input */}
-      {showLocationEntry
-        ? <LocationEntry onLocationSet={handleManualLocation} />
-        : <ChatInput onSend={sendMessage} isLoading={isLoading} />}
     </div>
   );
 }

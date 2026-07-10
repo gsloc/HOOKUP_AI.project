@@ -3,8 +3,9 @@
 import { ServiceStatus } from '@/types';
 
 interface AppHeaderProps {
-  onClear: () => void;
   services?: ServiceStatus[];
+  /** Mobile hamburger toggle — omitted → button hidden entirely. */
+  onOpenSidebar?: () => void;
 }
 
 const DEFAULT_SERVICES: ServiceStatus[] = [
@@ -13,7 +14,7 @@ const DEFAULT_SERVICES: ServiceStatus[] = [
   { name: 'location', status: 'mock', label: 'Location' },
 ];
 
-export default function AppHeader({ onClear, services = DEFAULT_SERVICES }: AppHeaderProps) {
+export default function AppHeader({ services = DEFAULT_SERVICES, onOpenSidebar }: AppHeaderProps) {
   const statusColor: Record<ServiceStatus['status'], string> = {
     connected: 'bg-emerald-400',
     mock: 'bg-amber-400',
@@ -31,6 +32,26 @@ export default function AppHeader({ onClear, services = DEFAULT_SERVICES }: AppH
       {/* Main header */}
       <div className="flex items-center justify-between px-5 py-4">
         <div className="flex items-center gap-3">
+          {/* Mobile hamburger — only rendered when we have a handler */}
+          {onOpenSidebar && (
+            <button
+              onClick={onOpenSidebar}
+              aria-label="Open chat list"
+              className="md:hidden w-8 h-8 rounded-lg border border-ocean-600/40 bg-ocean-700/30
+                         hover:bg-ocean-600/40 flex items-center justify-center
+                         text-ocean-200/80 hover:text-ocean-50 transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 6h16M4 12h16M4 18h16"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
+
           {/* Logo mark */}
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-wave-500/20 to-ocean-500/40 border border-wave-500/20 flex items-center justify-center shadow-inner animate-wave-bob">
             <span className="text-xl">🎣</span>
@@ -43,24 +64,6 @@ export default function AppHeader({ onClear, services = DEFAULT_SERVICES }: AppH
               Your AI Fishing Intelligence Platform
             </p>
           </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onClear}
-            title="New conversation"
-            className="w-8 h-8 rounded-lg border border-ocean-600/40 bg-ocean-700/30 hover:bg-ocean-600/40 hover:border-ocean-500/50 flex items-center justify-center transition-all duration-150 text-ocean-400/70 hover:text-ocean-200"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M12 2V6M12 18V22M4.93 4.93L7.76 7.76M16.24 16.24L19.07 19.07M2 12H6M18 12H22M4.93 19.07L7.76 16.24M16.24 7.76L19.07 4.93"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
         </div>
       </div>
 
@@ -80,7 +83,7 @@ export default function AppHeader({ onClear, services = DEFAULT_SERVICES }: AppH
             </span>
           </div>
         ))}
-        <span className="ml-auto text-xs text-ocean-500/40 italic">Phase 1</span>
+        <span className="ml-auto text-xs text-ocean-500/40 italic">Phase 3</span>
       </div>
     </div>
   );

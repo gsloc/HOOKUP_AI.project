@@ -80,6 +80,11 @@ export class MissingApiKeyError extends Error {
 
 // ─── Context Gathering ────────────────────────────────────────────────────────
 
+export interface MentionState {
+  weatherMentioned: boolean;
+  tidesMentioned: boolean;
+}
+
 export async function gatherFishingContext(
   clientLocation?: import('@/types').LocationData,
 ): Promise<FishingContext> {
@@ -115,7 +120,7 @@ export async function gatherFishingContext(
  * Builds the dynamic conditions block appended to the static prompt.
  * Kept separate so it can be varied per-request without touching the persona.
  */
-function buildDynamicContext(context: FishingContext): string {
+function buildDynamicContext(context: FishingContext, mentionState?: MentionState): string {
   const lines: string[] = ['## Live Conditions'];
 
   if (context.location) {
@@ -150,6 +155,26 @@ function buildDynamicContext(context: FishingContext): string {
     );
   }
 
+  // First-mention nudges: get weather/tide into the conversation early, then
+  // stop forcing them once they've been mentioned in this chat.
+  if (mentionState) {
+    if (!mentionState.weatherMentioned && context.weather) {
+      lines.push(
+        '- INSTRUCTION: Mention current weather at least once in this response (e.g., pressure, wind, cloud cover) — this is your first weather note of this chat.',
+      );
+    }
+    if (!mentionState.tidesMentioned && context.tides) {
+      lines.push(
+        '- INSTRUCTION: Mention the current tide state at least once in this response — this is your first tide note of this chat.',
+      );
+    }
+    if (mentionState.weatherMentioned && mentionState.tidesMentioned) {
+      lines.push(
+        '- INSTRUCTION: Do not force weather or tide references in this response unless naturally relevant to the user\'s question.',
+      );
+    }
+  }
+
   // Only include section if there is at least one data line beyond the header
   return lines.length > 1 ? lines.join('\n') : '';
 }
@@ -158,8 +183,8 @@ function buildDynamicContext(context: FishingContext): string {
  * Joins the static persona and live conditions into a single system instruction
  * string for Gemini's config.systemInstruction field.
  */
-function buildSystemInstruction(context: FishingContext): string {
-  const dynamic = buildDynamicContext(context);
+function buildSystemInstruction(context: FishingContext, mentionState?: MentionState): string {
+  const dynamic = buildDynamicContext(context, mentionState);
   return dynamic ? `${STATIC_SYSTEM_PROMPT}\n\n${dynamic}` : STATIC_SYSTEM_PROMPT;
 }
 
@@ -205,6 +230,7 @@ export async function streamQuery(
   history: ConversationTurn[],
   context: FishingContext,
   signal?: AbortSignal,
+  mentionState?: MentionState,
 ): Promise<ReadableStream<Uint8Array>> {
   // ── Mock fallback ─────────────────────────────────────────────────────────
   if (!process.env.GEMINI_API_KEY) {
@@ -215,7 +241,7 @@ export async function streamQuery(
   // ── Live Gemini stream ────────────────────────────────────────────────────
   const ai      = getClient();
   const encoder = new TextEncoder();
-  const systemInstruction = buildSystemInstruction(context);
+  const systemInstruction = buildSystemInstruction(context, mentionState);
   const contents          = toGeminiContents(history, userMessage);
 
   return new ReadableStream<Uint8Array>({

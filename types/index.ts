@@ -88,7 +88,20 @@ export interface FishingContext {
 export interface ChatApiRequest {
   message: string;
   conversationHistory?: Pick<Message, 'role' | 'content'>[];
-  location?: LocationData;   // Client-supplied location (geolocation or manual entry)
+  location?: LocationData;    // Client-supplied location (geolocation or manual entry)
+  weatherMentioned?: boolean; // Whether the AI has mentioned weather in this chat already
+  tidesMentioned?: boolean;   // Same for tides — used to gate first-mention nudges
+}
+
+export interface Chat {
+  id: string;
+  title: string;                    // "Sunday Jul 12 · New chat" or "Sunday Jul 12 · Wrightsville Redfish"
+  createdAt: string;                // ISO 8601
+  updatedAt: string;                // ISO 8601 — updated on every message
+  messages: Message[];              // Persisted turn history (user + assistant only, no welcome)
+  locationContext?: LocationData;   // Snapshot at time of chat creation
+  weatherMentioned?: boolean;       // Tracks whether AI has mentioned weather in this chat
+  tidesMentioned?: boolean;         // Same for tides
 }
 
 export interface ChatApiResponse {
@@ -107,6 +120,7 @@ export interface ChatState {
 export type ChatAction =
   | { type: 'ADD_MESSAGE'; payload: Message }
   | { type: 'APPEND_TO_MESSAGE'; payload: { id: string; chunk: string } }
+  | { type: 'LOAD_MESSAGES'; payload: Message[] }
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_ERROR'; payload: string | null }
   | { type: 'CLEAR_MESSAGES' };

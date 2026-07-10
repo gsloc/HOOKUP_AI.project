@@ -44,7 +44,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       message,
       body.conversationHistory ?? [],
       context,
-      req.signal,   // Aborts the Anthropic call if the client disconnects
+      req.signal,   // Aborts the Gemini call if the client disconnects
+      {
+        weatherMentioned: body.weatherMentioned === true,
+        tidesMentioned:   body.tidesMentioned   === true,
+      },
     );
 
     return new Response(stream, { status: 200, headers: STREAM_HEADERS });
